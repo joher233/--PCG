@@ -106,26 +106,33 @@ def analyze_image_with_doubao(image_path: str, prompt: str, api_key: str) -> str
         raise RuntimeError(f"豆包 API 请求失败 (状态码 {resp.status_code}): {resp.text}")
 
 def plan_with_deepseek(api_key: str, model: str, orig_desc: str, ad_req: str, ad_type: str, dur: float, vision_contexts: str) -> dict:
-    """调用 DeepSeek 结合视觉分析结果做出最终决策，并编写视频生成提示词"""
+    """调用 DeepSeek 结合视觉分析结果做出最终决策，并编写大师级视频生成提示词"""
     client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+    
+    # 极度强化的导演级 Prompt
     prompt = f"""
-你是一个金牌广告剪辑导演。现在你需要为一个视频安排广告植入。
-原视频总时长：{dur:.1f} 秒。
-原视频基本简介：{orig_desc}
-广告要求：{ad_req}
-广告素材类型：{ad_type}
+作为一名拥有十年经验的好莱坞级商业广告导演与神级后期剪辑师，你深谙视觉心理学与叙事节奏。现在，你需要为一个原生视频精准植入一段商业广告，做到“无缝融合，润物无声”。
 
-【关键画面视觉分析报告（由豆包AI视觉引擎提供）】
+【基础项目信息】
+🎬 原视频总时长：{dur:.1f} 秒
+📜 原视频核心大意：{orig_desc}
+🎯 品牌方广告核心诉求：{ad_req}
+📦 广告素材原始形式：{ad_type}
+
+【多模态视觉侦察报告（豆包AI引擎提供）】
+以下是原视频在关键时间节点的视觉画面拆解：
 {vision_contexts}
 
-请根据以上画面分析报告，选择一个**最自然的插入时间点**。
-必须返回纯 JSON 格式：
+【你的导演任务】
+请基于上述多模态视觉报告，运用你的专业审美，找到一个**情绪最连贯、视觉最契合、观众最不易反感**的“黄金插入点”，并为接下来的 AI 视频生成大模型撰写出极高水准的画面生成提示词（Prompt）。
+
+必须严格遵守以下 JSON 格式输出，不要包含任何多余的解释性文本或 Markdown 标记：
 {{
-  "insert_time_sec": 插入的精确秒数 (必须在 1.0 到 {dur-1.0:.1f} 之间),
-  "reason": "结合豆包的视觉描述，解释为什么选这个时间点最自然？",
-  "method": "转场过渡 / 剧情插播",
-  "video_prompt": "用一段极具画面感的提示词描述你要生成的广告视频（例如：特写镜头，一瓶清凉的饮料，水珠滑落，背景虚化，高画质电影感，4k，真实物理动态）。必须详细且有画面感！",
-  "ad_script": "结合刚刚的画面内容，写一句承上启下的旁白台词（50字内）"
+  "insert_time_sec": 插入的精确秒数 (必须在 1.0 到 {dur-1.0:.1f} 之间，精确到小数点后一位，选择画面切换或情绪留白的绝佳时机),
+  "reason": "深度解析：结合豆包的视觉描述，从运镜、色彩、人物动作或情绪节奏的角度，深度剖析为何选这个时间点作为黄金插入点？",
+  "method": "植入手法（如：视觉暂留转场 / 匹配剪辑 / 情绪延展插播 / 场景空间融合等）",
+  "video_prompt": "【写给顶尖视频大模型的超写实Prompt】请用丰富细腻、极具画面感的语言描述广告视频。必须包含：主体细节(材质/光泽)、物理动态(水滴/烟雾/粒子/风吹)、环境光影(丁达尔光/霓虹/柔光)、摄影机语言(微距特写/推轨镜头/景深虚化)、画质规格(4k, 8k, Unreal Engine 5渲染, 电影级色彩科学)。(100-200字之间，越生动越好)",
+  "ad_script": "【神级文案】写一句（50字内）承上启下的旁白台词，既要紧扣前一秒的原视频画面，又要丝滑引出品牌诉求，极具感染力与共鸣感。"
 }}"""
     
     resp = client.chat.completions.create(
@@ -247,7 +254,8 @@ with st.sidebar:
     
     volces_key = st.text_input("火山引擎 (豆包) API Key", value="ark-20123d3b-09ac-4ede-b7c5-19a4c53f3dbc-9e361", type="password", help="用于豆包视觉分析 和 Seedance 视频生成")
     
-    deepseek_key = st.text_input("DeepSeek API Key", value=os.getenv("DEEPSEEK_API_KEY", ""), type="password")
+    # 【已修改】将默认的 API Key 替换为你指定的 DeepSeek Key
+    deepseek_key = st.text_input("DeepSeek API Key", value="sk-ab72dc6429334244a7dc7f43e00e504c", type="password")
     deepseek_model = st.selectbox(
         "DeepSeek 模型版本", 
         ["deepseek-chat", "deepseek-v4-flash", "deepseek-v4-pro", "deepseek-reasoner"],
@@ -329,7 +337,7 @@ if st.button("🚀 开始 AI 智能视觉打点与视频融合", type="primary",
     if ad_type in ["text", "image"]:
         st.markdown("### 🎥 豆包 Seedance 正在无中生有渲染真实广告片段...")
         video_prompt = plan.get("video_prompt", f"生成一段高品质的视频，内容：{ad_text}")
-        st.info(f"💡 DeepSeek 编写的视频分镜提示词：\n{video_prompt}")
+        st.info(f"💡 DeepSeek 编写的电影级分镜提示词：\n{video_prompt}")
         
         generated_ad_mp4 = str(job_dir / "seedance_generated.mp4")
         img_path_for_gen = ad_input if ad_type == "image" else None
