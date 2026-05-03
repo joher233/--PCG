@@ -18,8 +18,8 @@ from openai import OpenAI
 # 1. 基础配置与初始化
 # =========================
 st.set_page_config(page_title="AI 智能融合广告生成器", page_icon="🎬", layout="wide")
-st.title("🎬 豆包视觉 × DeepSeek × Seedance：AI 智能广告融合")
-st.caption("全链路：抽帧分析(豆包视觉) -> 导演决策与分镜(DeepSeek) -> 物理级视频渲染(豆包Seedance) -> 无缝合成(FFmpeg)")
+st.title("🎬 豆包视觉 × DeepSeek × Seedance：无缝延展广告")
+st.caption("全链路：抽帧分析 -> 导演决策 -> 提取插入点首帧 -> 视频无缝延展渲染 -> FFmpeg合成")
 
 OUTPUT_ROOT = Path.cwd() / "outputs"
 OUTPUT_ROOT.mkdir(exist_ok=True)
@@ -60,7 +60,7 @@ def extract_json_object(text: str) -> dict:
     return {}
 
 def extract_keyframe(ffmpeg_bin: str, video_path: str, time_sec: float, out_img: str):
-    """从指定秒数提取一帧作为视觉分析依据"""
+    """从指定秒数提取一帧"""
     cmd = [ffmpeg_bin, "-y", "-ss", str(time_sec), "-i", video_path, "-vframes", "1", "-q:v", "2", out_img]
     subprocess.run(cmd, capture_output=True)
 
@@ -68,7 +68,6 @@ def extract_keyframe(ffmpeg_bin: str, video_path: str, time_sec: float, out_img:
 # 3. AI 大模型 API 调用函数
 # =========================
 def analyze_image_with_doubao(image_path: str, prompt: str, api_key: str) -> str:
-    """调用火山豆包多模态 API 分析画面内容"""
     with open(image_path, "rb") as f:
         img_base64 = base64.b64encode(f.read()).decode("utf-8")
     
@@ -105,34 +104,30 @@ def analyze_image_with_doubao(image_path: str, prompt: str, api_key: str) -> str
     else:
         raise RuntimeError(f"豆包 API 请求失败 (状态码 {resp.status_code}): {resp.text}")
 
-def plan_with_deepseek(api_key: str, model: str, orig_desc: str, ad_req: str, ad_type: str, dur: float, vision_contexts: str) -> dict:
-    """调用 DeepSeek 结合视觉分析结果做出最终决策，并编写大师级视频生成提示词"""
+def plan_with_deepseek(api_key: str, model: str, orig_desc: str, ad_req: str, dur: float, vision_contexts: str) -> dict:
+    """高度定制化的无缝延展 Prompt"""
     client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
-    
-    # 极度强化的导演级 Prompt
     prompt = f"""
-作为一名拥有十年经验的好莱坞级商业广告导演与神级后期剪辑师，你深谙视觉心理学与叙事节奏。现在，你需要为一个原生视频精准植入一段商业广告，做到“无缝融合，润物无声”。
+你是一名好莱坞级商业广告导演。我们要使用“图生视频延展技术”将广告无缝植入原视频。
 
-【基础项目信息】
+【基础信息】
 🎬 原视频总时长：{dur:.1f} 秒
-📜 原视频核心大意：{orig_desc}
-🎯 品牌方广告核心诉求：{ad_req}
-📦 广告素材原始形式：{ad_type}
+📜 原视频大意：{orig_desc}
+🎯 广告核心诉求：{ad_req}
 
-【多模态视觉侦察报告（豆包AI引擎提供）】
-以下是原视频在关键时间节点的视觉画面拆解：
+【视觉侦察报告】
 {vision_contexts}
 
-【你的导演任务】
-请基于上述多模态视觉报告，运用你的专业审美，找到一个**情绪最连贯、视觉最契合、观众最不易反感**的“黄金插入点”，并为接下来的 AI 视频生成大模型撰写出极高水准的画面生成提示词（Prompt）。
+【核心机制要求，非常重要！】
+1. 你选定的 `insert_time_sec` 的画面，将被我们截取下来，作为AI视频生成的**【起始第一帧】**。
+2. 你的 `video_prompt` 必须描述：**画面从这一帧开始，里面的人物/场景如何产生自然连续的动作，并巧妙过渡到广告产品的展示上。**（例如：画面中的主角手顺势一抬，手里变出了一瓶清凉的饮料，镜头推进给饮料特写，水珠滑落...）
 
-必须严格遵守以下 JSON 格式输出，不要包含任何多余的解释性文本或 Markdown 标记：
+请严格输出 JSON：
 {{
-  "insert_time_sec": 插入的精确秒数 (必须在 1.0 到 {dur-1.0:.1f} 之间，精确到小数点后一位，选择画面切换或情绪留白的绝佳时机),
-  "reason": "深度解析：结合豆包的视觉描述，从运镜、色彩、人物动作或情绪节奏的角度，深度剖析为何选这个时间点作为黄金插入点？",
-  "method": "植入手法（如：视觉暂留转场 / 匹配剪辑 / 情绪延展插播 / 场景空间融合等）",
-  "video_prompt": "【写给顶尖视频大模型的超写实Prompt】请用丰富细腻、极具画面感的语言描述广告视频。必须包含：主体细节(材质/光泽)、物理动态(水滴/烟雾/粒子/风吹)、环境光影(丁达尔光/霓虹/柔光)、摄影机语言(微距特写/推轨镜头/景深虚化)、画质规格(4k, 8k, Unreal Engine 5渲染, 电影级色彩科学)。(100-200字之间，越生动越好)",
-  "ad_script": "【神级文案】写一句（50字内）承上启下的旁白台词，既要紧扣前一秒的原视频画面，又要丝滑引出品牌诉求，极具感染力与共鸣感。"
+  "insert_time_sec": 12.5,
+  "reason": "为何选这个时间点的画面作为延展的起点？",
+  "video_prompt": "基于选定时间的画面，描述接下来5秒的连续动态变化，以及产品的魔法般出现或展示过程。必须有极强画面感、动作连续性和高质量提示词(如4k, 电影感)",
+  "ad_script": "配音台词（50字内）"
 }}"""
     
     resp = client.chat.completions.create(
@@ -144,18 +139,15 @@ def plan_with_deepseek(api_key: str, model: str, orig_desc: str, ad_req: str, ad
     return extract_json_object(resp.choices[0].message.content)
 
 def generate_video_with_seedance(prompt: str, image_path: str, api_key: str, output_path: str) -> str:
-    """调用火山豆包 Seedance 模型生成真实视频 (支持文生视频 / 图生视频)"""
     url_create = "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks"
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
 
-    # 构造任务请求
     full_prompt = f"{prompt} --resolution 1080p --duration 5 --camerafixed false"
     content_list = [{"type": "text", "text": full_prompt}]
 
-    # 如果有图片，转为【图生视频】
     if image_path and os.path.exists(image_path):
         with open(image_path, "rb") as f:
             img_base64 = base64.b64encode(f.read()).decode("utf-8")
@@ -175,54 +167,42 @@ def generate_video_with_seedance(prompt: str, image_path: str, api_key: str, out
         raise RuntimeError(f"视频生成任务创建失败: {resp.text}")
 
     task_id = resp.json().get("id")
-    if not task_id:
-        raise RuntimeError(f"未获取到 Task ID: {resp.text}")
-
-    # 轮询等待视频生成完成
-    url_query = f"https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/{task_id}"
     
-    with st.spinner("🎥 豆包 Seedance 正在渲染物理级真实视频 (约需1-2分钟，请耐心等待)..."):
+    url_query = f"https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/{task_id}"
+    with st.spinner("🎥 豆包 Seedance 正在基于原视频画面进行物理延展渲染 (约需1-2分钟)..."):
         video_url = ""
         while True:
             q_resp = requests.get(url_query, headers=headers)
             if q_resp.status_code == 200:
                 q_data = q_resp.json()
                 status = q_data.get("status", "").lower()
-
                 if status == "succeeded":
-                    try:
-                        video_url = q_data["content"]["video_url"]
-                    except:
-                        video_url = str(q_data)
+                    try: video_url = q_data["content"]["video_url"]
+                    except: video_url = str(q_data)
                     break
                 elif status in ["failed", "error"]:
                     raise RuntimeError(f"视频生成失败: {q_data}")
-            
             time.sleep(5)
 
-    if not video_url.startswith("http"):
-        raise RuntimeError(f"未能解析到合法的视频地址，接口返回：{video_url}")
-
-    # 下载视频
     video_data = requests.get(video_url).content
     with open(output_path, "wb") as f:
         f.write(video_data)
-        
     return output_path
 
 # =========================
 # 4. FFmpeg 视频合成逻辑
 # =========================
-def build_final_video(ffmpeg, ffprobe, orig_path, ad_type, ad_input, ad_dur, plan, work_dir):
+def build_final_video(ffmpeg, ffprobe, orig_path, ad_mp4_path, plan, work_dir):
     meta = get_media_meta(ffprobe, orig_path)
     W, H, orig_dur = meta["width"], meta["height"], meta["duration"]
     insert_t = max(1.0, min(float(plan.get("insert_time_sec", orig_dur / 2)), orig_dur - 1.0))
     
-    p1, ad_mp4, p2, concat_txt, final_out = work_dir/"p1.mp4", work_dir/"ad.mp4", work_dir/"p2.mp4", work_dir/"list.txt", work_dir/"final.mp4"
+    p1, p2, concat_txt, final_out = work_dir/"p1.mp4", work_dir/"p2.mp4", work_dir/"list.txt", work_dir/"final.mp4"
     
     norm_vf = f"scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,fps=30,setsar=1"
     base_cmd = ["-c:v", "libx264", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2"]
 
+    # 切割原视频
     for seg, start, end in [(p1, 0, insert_t), (p2, insert_t, None)]:
         if start is not None and start >= orig_dur - 0.5: continue
         cmd = [ffmpeg, "-y"]
@@ -233,13 +213,15 @@ def build_final_video(ffmpeg, ffprobe, orig_path, ad_type, ad_input, ad_dur, pla
         cmd += ["-vf", norm_vf] + base_cmd + [str(seg)]
         run_cmd(cmd)
 
-    # 制作广告片段（此时 ad_input 必然已经是 MP4 视频了）
-    ad_real_dur = get_media_meta(ffprobe, ad_input)["duration"] or ad_dur
-    vf = f"{norm_vf},fade=t=in:st=0:d=0.5,fade=t=out:st={ad_real_dur-0.5}:d=0.5"
-    cmd = [ffmpeg, "-y", "-i", ad_input, "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100", "-shortest", "-map", "0:v:0", "-map", "1:a:0", "-vf", vf] + base_cmd + [str(ad_mp4)]
+    # 规范化生成的广告视频，仅做轻微音频淡入淡出（画面已是无缝所以不需要画面渐变）
+    ad_norm = work_dir/"ad_norm.mp4"
+    ad_dur = get_media_meta(ffprobe, ad_mp4_path)["duration"] or 5.0
+    vf_ad = f"{norm_vf}" # 去掉了 fade 滤镜，因为我们要它和前一帧完全衔接！
+    cmd = [ffmpeg, "-y", "-i", ad_mp4_path, "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100", "-shortest", "-map", "0:v:0", "-map", "1:a:0", "-vf", vf_ad] + base_cmd + [str(ad_norm)]
     run_cmd(cmd)
 
-    clips = [p for p in [p1, ad_mp4, p2] if p.exists()]
+    # 拼接
+    clips = [p for p in [p1, ad_norm, p2] if p.exists()]
     with open(concat_txt, "w") as f:
         for p in clips: f.write(f"file '{p.absolute().as_posix()}'\n")
     
@@ -251,36 +233,20 @@ def build_final_video(ffmpeg, ffprobe, orig_path, ad_type, ad_input, ad_dur, pla
 # =========================
 with st.sidebar:
     st.header("⚙️ 核心引擎配置")
-    
-    volces_key = st.text_input("火山引擎 (豆包) API Key", value="ark-20123d3b-09ac-4ede-b7c5-19a4c53f3dbc-9e361", type="password", help="用于豆包视觉分析 和 Seedance 视频生成")
-    
-    # 【已修改】将默认的 API Key 替换为你指定的 DeepSeek Key
+    volces_key = st.text_input("火山引擎 (豆包) API Key", value="ark-20123d3b-09ac-4ede-b7c5-19a4c53f3dbc-9e361", type="password")
     deepseek_key = st.text_input("DeepSeek API Key", value="sk-ab72dc6429334244a7dc7f43e00e504c", type="password")
-    deepseek_model = st.selectbox(
-        "DeepSeek 模型版本", 
-        ["deepseek-chat", "deepseek-v4-flash", "deepseek-v4-pro", "deepseek-reasoner"],
-        index=0
-    )
-    
+    deepseek_model = st.selectbox("DeepSeek 模型", ["deepseek-chat", "deepseek-v4-flash", "deepseek-v4-pro"], index=0)
     ffmpeg_bin = st.text_input("ffmpeg 路径", "ffmpeg")
     ffprobe_bin = st.text_input("ffprobe 路径", "ffprobe")
 
 col1, col2 = st.columns(2)
 with col1:
     orig_desc = st.text_area("原视频大意", "一支Vlog视频")
-    ad_req = st.text_area("广告核心要求", "植入一款饮料广告，要自然承接。")
     orig_vid = st.file_uploader("上传原视频", type=["mp4"])
 with col2:
-    ad_type = st.radio("广告形式", ["text", "image", "video"], horizontal=True)
-    ad_dur = 5.0 # AI 视频生成固定时长通常为5秒左右
-    
-    ad_file, ad_text = None, ""
-    if ad_type in ["image", "video"]: 
-        ad_file = st.file_uploader(f"上传广告{ad_type}", type=["mp4", "png", "jpg", "jpeg"])
-    else: 
-        ad_text = st.text_area("广告文案", "补充能量，即刻出发！")
+    ad_req = st.text_area("广告核心要求", "广告内容：在这个场景中顺理成章地拿出一瓶运动饮料展示。")
 
-if st.button("🚀 开始 AI 智能视觉打点与视频融合", type="primary", use_container_width=True):
+if st.button("🚀 开始生成无缝延展广告", type="primary", use_container_width=True):
     if not (volces_key and deepseek_key and orig_vid):
         st.error("请填全 API Keys 并上传视频！")
         st.stop()
@@ -290,84 +256,39 @@ if st.button("🚀 开始 AI 智能视觉打点与视频融合", type="primary",
     orig_path = job_dir / "orig.mp4"
     orig_path.write_bytes(orig_vid.read())
     
-    if ad_type in ["image", "video"] and ad_file:
-        ad_input = job_dir / f"ad_{ad_file.name}"
-        ad_input.write_bytes(ad_file.read())
-        ad_input = str(ad_input)
-    else: 
-        ad_input = ad_text
-    
     ffmpeg_exec, ffprobe_exec = find_executable(ffmpeg_bin, "ffmpeg"), find_executable(ffprobe_bin, "ffprobe")
-    meta = get_media_meta(ffprobe_exec, str(orig_path))
-    dur = meta["duration"]
+    dur = get_media_meta(ffprobe_exec, str(orig_path))["duration"]
 
-    # ====== 阶段 1：豆包视觉抽帧分析 ======
-    st.markdown("### 👁️ 豆包 AI 正在进行视觉打点分析...")
+    # ====== 1. 抽帧分析 ======
+    st.markdown("### 👁️ 豆包 AI 视觉打点分析...")
     vision_reports = ""
     cols = st.columns(3)
-    
     for i, pct in enumerate([0.2, 0.5, 0.8]):
         t = dur * pct
         img_path = str(job_dir / f"frame_{i}.jpg")
         extract_keyframe(ffmpeg_exec, str(orig_path), t, img_path)
-        
         with cols[i]:
-            st.image(img_path, caption=f"第 {t:.1f} 秒截图")
-            with st.spinner("豆包分析中..."):
-                prompt = f"我要在这个视频里植入广告。要求是：{ad_req}。请描述画面的具体场景和人物动作，并分析这个瞬间是否适合作为广告切入点？"
-                try:
-                    analysis = analyze_image_with_doubao(img_path, prompt, volces_key)
-                    st.success("分析完毕")
-                    st.caption(analysis[:100] + "...") 
-                    vision_reports += f"【时间点：{t:.1f}秒】\n画面描述：{analysis}\n\n"
-                except Exception as e:
-                    st.error(f"视觉分析失败: {e}")
+            st.image(img_path, caption=f"第 {t:.1f} 秒")
+            analysis = analyze_image_with_doubao(img_path, f"描述画面场景、人物动作，分析此处是否适合做广告插入转折点？广告要求：{ad_req}", volces_key)
+            vision_reports += f"【{t:.1f}秒】画面：{analysis}\n"
 
-    # ====== 阶段 2：DeepSeek 综合决策 ======
-    st.markdown("### 🧠 DeepSeek 正在基于视觉报告进行导演决策...")
-    with st.spinner(f"调用 {deepseek_model} ..."):
-        try:
-            plan = plan_with_deepseek(deepseek_key, deepseek_model, orig_desc, ad_req, ad_type, dur, vision_reports)
-            st.json(plan)
-        except Exception as e:
-            st.error(f"DeepSeek 决策失败: {e}")
-            st.stop()
+    # ====== 2. DeepSeek 决策 ======
+    st.markdown("### 🧠 DeepSeek 导演决策...")
+    plan = plan_with_deepseek(deepseek_key, deepseek_model, orig_desc, ad_req, dur, vision_reports)
+    st.json(plan)
+    insert_t = max(1.0, min(float(plan.get("insert_time_sec", dur/2)), dur - 1.0))
 
-    # ====== 阶段 3：豆包 Seedance 真实视频生成 ======
-    if ad_type in ["text", "image"]:
-        st.markdown("### 🎥 豆包 Seedance 正在无中生有渲染真实广告片段...")
-        video_prompt = plan.get("video_prompt", f"生成一段高品质的视频，内容：{ad_text}")
-        st.info(f"💡 DeepSeek 编写的电影级分镜提示词：\n{video_prompt}")
-        
-        generated_ad_mp4 = str(job_dir / "seedance_generated.mp4")
-        img_path_for_gen = ad_input if ad_type == "image" else None
-        
-        try:
-            generate_video_with_seedance(
-                prompt=video_prompt, 
-                image_path=img_path_for_gen, 
-                api_key=volces_key, 
-                output_path=generated_ad_mp4
-            )
-            st.success("✅ AI 视频渲染完成！")
-            
-            # 【关键魔法】将类型转为视频，后续交给FFmpeg做标准视频拼接
-            ad_type = "video"
-            ad_input = generated_ad_mp4
-            
-        except Exception as e:
-            st.error("视频生成失败")
-            st.exception(e)
-            st.stop()
+    # ====== 3. 截取延展首帧并生成视频 ======
+    st.markdown("### 🎥 提取过渡帧并进行 AI 物理延展生成...")
+    transition_frame = str(job_dir / "transition_frame.jpg")
+    extract_keyframe(ffmpeg_exec, str(orig_path), insert_t, transition_frame)
+    st.image(transition_frame, caption=f"🔗 提取第 {insert_t:.1f} 秒作为 AI 生成起始帧 (无缝衔接保证)")
+    
+    generated_ad_mp4 = str(job_dir / "seedance_generated.mp4")
+    generate_video_with_seedance(plan.get("video_prompt", ""), transition_frame, volces_key, generated_ad_mp4)
+    st.success("✅ 视频延展生成完毕！")
 
-    # ====== 阶段 4：FFmpeg 动态合成 ======
-    st.markdown("### 🎬 FFmpeg 正在进行无缝拼接...")
-    with st.spinner("视频合成中，请稍候..."):
-        try:
-            final_mp4 = build_final_video(ffmpeg_exec, ffprobe_exec, str(orig_path), ad_type, ad_input, ad_dur, plan, job_dir)
-            st.success("🎉 融合完毕！")
-            st.video(final_mp4)
-            st.download_button("📥 下载带广告的成品视频", open(final_mp4, "rb"), "ai_ad_fused.mp4", "video/mp4", use_container_width=True)
-        except Exception as e:
-            st.error("视频处理出错！")
-            st.exception(e)
+    # ====== 4. 合成 ======
+    st.markdown("### 🎬 FFmpeg 无缝合成拼接...")
+    final_mp4 = build_final_video(ffmpeg_exec, ffprobe_exec, str(orig_path), generated_ad_mp4, plan, job_dir)
+    st.video(final_mp4)
