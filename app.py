@@ -19,7 +19,7 @@ from openai import OpenAI
 # =========================
 st.set_page_config(page_title="AI 智能融合广告生成器", page_icon="🎬", layout="wide")
 st.title("🎬 豆包视觉 × DeepSeek × Seedance：无缝延展广告")
-st.caption("全链路：抽帧分析 -> 导演决策 -> 提取插入点首帧 -> 视频无缝延展渲染 -> FFmpeg合成")
+st.caption("全链路：抽帧分析 -> 导演决策(结合问卷数据) -> 提取插入点首帧 -> 视频无缝延展渲染 -> FFmpeg合成")
 
 OUTPUT_ROOT = Path.cwd() / "outputs"
 OUTPUT_ROOT.mkdir(exist_ok=True)
@@ -105,29 +105,36 @@ def analyze_image_with_doubao(image_path: str, prompt: str, api_key: str) -> str
         raise RuntimeError(f"豆包 API 请求失败 (状态码 {resp.status_code}): {resp.text}")
 
 def plan_with_deepseek(api_key: str, model: str, orig_desc: str, ad_req: str, dur: float, vision_contexts: str) -> dict:
-    """高度定制化的无缝延展 Prompt"""
+    """深度融合了用户真实调研问卷数据的神级 Prompt"""
     client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
     prompt = f"""
-你是一名好莱坞级商业广告导演。我们要使用“图生视频延展技术”将广告无缝植入原视频。
+作为一名顶尖的新媒体商业广告导演，你要使用“图生视频首帧延展技术”将广告无缝植入原视频。
 
-【基础信息】
+【核心：受众心理与植入铁律（基于最新调研问卷）】
+你必须严格遵守以下基于真实用户调研的数据法则，否则广告会被观众彻底厌恶：
+1. 绝对禁忌：91.3%的观众极度反感“正片中间突然打断”！你的植入时间点（insert_time_sec）绝不能在剧情高潮或动作一半时切断。
+2. 最佳位置：观众最接受的广告位置依次是：视频片尾结束处（34.8%）、片头（30.4%），以及“不影响内容的绝对自然过渡点”（47.8%）。优先考虑寻找这些点。
+3. 创意为王：78.3%的观众认为好广告必须“有创意、有梗”，73.9%要求“绝对不打扰观看”。你的植入设计必须像原生内容的一部分。
+
+【基础项目信息】
 🎬 原视频总时长：{dur:.1f} 秒
 📜 原视频大意：{orig_desc}
 🎯 广告核心诉求：{ad_req}
 
-【视觉侦察报告】
+【视觉侦察报告（豆包引擎提供）】
+以下是视频中几个时间节点的视觉画面拆解：
 {vision_contexts}
 
-【核心机制要求，非常重要！】
-1. 你选定的 `insert_time_sec` 的画面，将被我们截取下来，作为AI视频生成的**【起始第一帧】**。
-2. 你的 `video_prompt` 必须描述：**画面从这一帧开始，里面的人物/场景如何产生自然连续的动作，并巧妙过渡到广告产品的展示上。**（例如：画面中的主角手顺势一抬，手里变出了一瓶清凉的饮料，镜头推进给饮料特写，水珠滑落...）
+【延展生成机制，非常重要！】
+1. 你选定的 `insert_time_sec` 的画面，将被我们截取下来，作为后续AI视频大模型生成的**【起始第一帧】**。
+2. 你的 `video_prompt` 必须描述：**画面从这一帧起，里面的人物/环境如何发生自然连续的变化，并带点幽默/梗地巧妙变出或展示广告产品。**
 
-请严格输出 JSON：
+请严格输出 JSON（不要输出多余解释）：
 {{
-  "insert_time_sec": 12.5,
-  "reason": "为何选这个时间点的画面作为延展的起点？",
-  "video_prompt": "基于选定时间的画面，描述接下来5秒的连续动态变化，以及产品的魔法般出现或展示过程。必须有极强画面感、动作连续性和高质量提示词(如4k, 电影感)",
-  "ad_script": "配音台词（50字内）"
+  "insert_time_sec": 插入的精确秒数 (必须在 1.0 到 {dur-1.0:.1f} 之间，请结合问卷要求，优选结尾、开头或绝佳气口),
+  "reason": "深度解析：结合调研数据与豆包的视觉描述，解释为何这个点不会激怒观众，且能做到神级衔接？",
+  "video_prompt": "写给Seedance视频大模型的高级提示词。基于选定时间的画面，描述接下来的连续动态变化。要求：物理动作连贯、有创意/有梗、无缝过渡到产品特写，包含高质量参数(如4k, 电影感)。",
+  "ad_script": "配音台词（50字内，要有梗或顺理成章的文案，化解观众对广告的抵触心理）"
 }}"""
     
     resp = client.chat.completions.create(
@@ -169,7 +176,7 @@ def generate_video_with_seedance(prompt: str, image_path: str, api_key: str, out
     task_id = resp.json().get("id")
     
     url_query = f"https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/{task_id}"
-    with st.spinner("🎥 豆包 Seedance 正在基于原视频画面进行物理延展渲染 (约需1-2分钟)..."):
+    with st.spinner("🎥 豆包 Seedance 正在基于原片首帧进行内容延展渲染 (约需1-2分钟)..."):
         video_url = ""
         while True:
             q_resp = requests.get(url_query, headers=headers)
@@ -213,10 +220,9 @@ def build_final_video(ffmpeg, ffprobe, orig_path, ad_mp4_path, plan, work_dir):
         cmd += ["-vf", norm_vf] + base_cmd + [str(seg)]
         run_cmd(cmd)
 
-    # 规范化生成的广告视频，仅做轻微音频淡入淡出（画面已是无缝所以不需要画面渐变）
+    # 规范化生成的广告视频，无缝衔接不需要画面渐变
     ad_norm = work_dir/"ad_norm.mp4"
-    ad_dur = get_media_meta(ffprobe, ad_mp4_path)["duration"] or 5.0
-    vf_ad = f"{norm_vf}" # 去掉了 fade 滤镜，因为我们要它和前一帧完全衔接！
+    vf_ad = f"{norm_vf}" 
     cmd = [ffmpeg, "-y", "-i", ad_mp4_path, "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100", "-shortest", "-map", "0:v:0", "-map", "1:a:0", "-vf", vf_ad] + base_cmd + [str(ad_norm)]
     run_cmd(cmd)
 
@@ -263,17 +269,18 @@ if st.button("🚀 开始生成无缝延展广告", type="primary", use_containe
     st.markdown("### 👁️ 豆包 AI 视觉打点分析...")
     vision_reports = ""
     cols = st.columns(3)
-    for i, pct in enumerate([0.2, 0.5, 0.8]):
+    # 根据问卷，更注重片尾、片头附近的抽帧分析
+    for i, pct in enumerate([0.1, 0.5, 0.95]):
         t = dur * pct
         img_path = str(job_dir / f"frame_{i}.jpg")
         extract_keyframe(ffmpeg_exec, str(orig_path), t, img_path)
         with cols[i]:
             st.image(img_path, caption=f"第 {t:.1f} 秒")
-            analysis = analyze_image_with_doubao(img_path, f"描述画面场景、人物动作，分析此处是否适合做广告插入转折点？广告要求：{ad_req}", volces_key)
+            analysis = analyze_image_with_doubao(img_path, f"描述画面场景、人物动作，分析此处是否适合做不打扰观看的广告插入点？", volces_key)
             vision_reports += f"【{t:.1f}秒】画面：{analysis}\n"
 
     # ====== 2. DeepSeek 决策 ======
-    st.markdown("### 🧠 DeepSeek 导演决策...")
+    st.markdown("### 🧠 DeepSeek 结合《问卷调研数据》导演决策...")
     plan = plan_with_deepseek(deepseek_key, deepseek_model, orig_desc, ad_req, dur, vision_reports)
     st.json(plan)
     insert_t = max(1.0, min(float(plan.get("insert_time_sec", dur/2)), dur - 1.0))
