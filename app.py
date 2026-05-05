@@ -18,8 +18,8 @@ from openai import OpenAI
 # 1. 基础配置与初始化
 # =========================
 st.set_page_config(page_title="AI 智能融合广告生成器", page_icon="🎬", layout="wide")
-st.title("🎬 豆包视觉 × DeepSeek × Seedance 1.5 Pro")
-st.caption("全链路：双向视觉分析(原视频+广告素材) -> 导演决策(基于问卷) -> AI渲染/延展 -> 无缝合成")
+st.title("🎬 豆包视觉 × DeepSeek × Seedance 智能广告融合")
+st.caption("全链路：双向视觉分析(原片+素材) -> 导演决策(基于问卷) -> AI渲染/延展(带降级策略) -> 无缝合成")
 
 OUTPUT_ROOT = Path.cwd() / "outputs"
 OUTPUT_ROOT.mkdir(exist_ok=True)
@@ -65,7 +65,7 @@ def extract_keyframe(ffmpeg_bin: str, video_path: str, time_sec: float, out_img:
     subprocess.run(cmd, capture_output=True)
 
 # =========================
-# 3. AI 大模型 API 调用函数 (加入多Key重试机制)
+# 3. AI 大模型 API 调用函数
 # =========================
 def analyze_image_with_doubao(image_path: str, prompt: str, api_keys: list) -> str:
     with open(image_path, "rb") as f:
@@ -102,12 +102,11 @@ def analyze_image_with_doubao(image_path: str, prompt: str, api_keys: list) -> s
                 return f"JSON解析错误: {e}"
         else:
             last_err = f"HTTP {resp.status_code}: {resp.text}"
-            continue # 失败则切换下一个 Key
+            continue 
             
     raise RuntimeError(f"豆包视觉 API 请求全部失败，最后错误: {last_err}")
 
 def plan_with_deepseek(api_key: str, model: str, orig_desc: str, dur: float, vision_contexts: str, ad_type: str, ad_material_desc: str) -> dict:
-    """结合原视频视觉和广告素材视觉的 DeepSeek 导演决策"""
     client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
     prompt = f"""
 作为一名顶尖的新媒体商业广告导演，你要将广告无缝植入原视频。
@@ -146,11 +145,10 @@ def plan_with_deepseek(api_key: str, model: str, orig_desc: str, dur: float, vis
     )
     return extract_json_object(resp.choices[0].message.content)
 
-def generate_video_with_seedance(prompt: str, image_path: str, api_keys: list, output_path: str) -> str:
-    """调用火山豆包 Seedance 1.5 Pro 模型生成真实视频 (带主备Key切换)"""
+def generate_video_with_seedance(prompt: str, image_path: str, api_configs: list, output_path: str) -> str:
+    """调用火山豆包 Seedance 模型生成真实视频 (动态匹配 Key 和 Model)"""
     url_create = "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks"
     
-    # 根据 Seedance 1.5 的参数要求，移除了冗余参数
     full_prompt = f"{prompt} --duration 5 --camerafixed false"
     content_list = [{"type": "text", "text": full_prompt}]
 
@@ -163,34 +161,40 @@ def generate_video_with_seedance(prompt: str, image_path: str, api_keys: list, o
             "image_url": {"url": f"data:image/{ext};base64,{img_base64}"}
         })
 
-    payload = {
-        "model": "doubao-seedance-1-5-pro-251215", # 升级到了 1.5 Pro
-        "content": content_list
-    }
-
-    # 尝试创建任务，带多 Key 自动回落机制
     task_id = None
     working_key = None
+    working_model = None
     last_err = ""
     
-    for api_key in api_keys:
+    # 遍历主备配置，根据对应的 Key 和 Model 发起请求
+    for config in api_configs:
+        api_key = config["key"]
+        model_name = config["model"]
+        
+        payload = {
+            "model": model_name,
+            "content": content_list
+        }
+        
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         resp = requests.post(url_create, headers=headers, json=payload)
+        
         if resp.status_code == 200 and resp.json().get("id"):
             task_id = resp.json().get("id")
-            working_key = api_key  # 记录成功创建任务的 Key，用于后续轮询
+            working_key = api_key
+            working_model = model_name
             break
         else:
-            last_err = f"HTTP {resp.status_code}: {resp.text}"
+            last_err = f"[{model_name}] HTTP {resp.status_code}: {resp.text}"
             
     if not task_id:
-        raise RuntimeError(f"视频生成任务创建失败(主备Key均无效): {last_err}")
+        raise RuntimeError(f"视频生成任务创建失败(主备配置均无效): {last_err}")
 
     # 使用创建成功的 Key 轮询等待视频生成完成
     poll_headers = {"Authorization": f"Bearer {working_key}", "Content-Type": "application/json"}
     url_query = f"https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/{task_id}"
     
-    with st.spinner("🎥 豆包 Seedance 1.5 Pro 正在渲染高级动态视频 (约需1-2分钟)..."):
+    with st.spinner(f"🎥 正在使用 {working_model} 渲染高级动态视频 (约需1-2分钟)..."):
         video_url = ""
         while True:
             q_resp = requests.get(url_query, headers=poll_headers)
@@ -250,17 +254,25 @@ def build_final_video(ffmpeg, ffprobe, orig_path, ad_mp4_path, plan, work_dir):
 with st.sidebar:
     st.header("⚙️ 核心引擎配置")
     
-    # 支持 1个主Key + 2个备用Key
     st.subheader("火山引擎 (豆包) API Keys")
-    volces_key_primary = st.text_input("主 Key", value="ark-539215fe-af52-4927-b0ac-ea38fc61d81e-046b7", type="password")
-    volces_key_backup1 = st.text_input("备用 Key 1", value="ark-a538a23c-9e76-442a-8774-599bb2a07dcb-709b0", type="password")
-    volces_key_backup2 = st.text_input("备用 Key 2", value="ark-20123d3b-09ac-4ede-b7c5-19a4c53f3dbc-9e361", type="password")
+    volces_key_primary = st.text_input("主 Key (1.5 Pro)", value="ark-55944f19-c838-49f2-971c-ca703b3980f1-f04e1", type="password")
+    volces_key_backup1 = st.text_input("备用 Key 1 (1.0 Fast)", value="ark-55944f19-c838-49f2-971c-ca703b3980f1-f04e1", type="password")
+    volces_key_backup2 = st.text_input("备用 Key 2 (1.0 Fast)", value="ark-ff09d587-8442-432e-91e0-88ba3886d634-86277", type="password")
     
-    # 自动过滤掉空字符串，生成轮询列表
-    volces_keys = [k.strip() for k in [volces_key_primary, volces_key_backup1, volces_key_backup2] if k.strip()]
+    # 构造 主备 Key 和 对应模型的配置列表
+    volces_configs = []
+    if volces_key_primary.strip():
+        volces_configs.append({"key": volces_key_primary.strip(), "model": "doubao-seedance-1-5-pro-251215"})
+    if volces_key_backup1.strip():
+        volces_configs.append({"key": volces_key_backup1.strip(), "model": "doubao-seedance-1-0-pro-fast-251015"})
+    if volces_key_backup2.strip():
+        volces_configs.append({"key": volces_key_backup2.strip(), "model": "doubao-seedance-1-0-pro-fast-251015"})
+        
+    # 单独提取 keys 用于视觉分析函数 (视觉分析模型统一固定)
+    volces_keys_only = [c["key"] for c in volces_configs]
     
     st.subheader("DeepSeek 决策大脑")
-    deepseek_key = st.text_input("DeepSeek API Key", value="sk-ab72dc6429334244a7dc7f43e00e504c", type="password")
+    deepseek_key = st.text_input("DeepSeek API Key", value="sk-be2f2294c2f34707a6452855a7441c76", type="password")
     deepseek_model = st.selectbox("DeepSeek 模型", ["deepseek-chat", "deepseek-v4-flash", "deepseek-v4-pro"], index=0)
     
     st.subheader("本地工具")
@@ -285,7 +297,7 @@ with col2:
         ad_file = st.file_uploader("上传成片广告视频", type=["mp4"])
 
 if st.button("🚀 开始双向分析与智能融合", type="primary", use_container_width=True):
-    if not (volces_keys and deepseek_key and orig_vid):
+    if not (volces_configs and deepseek_key and orig_vid):
         st.error("请填全 API Keys 并上传原视频！")
         st.stop()
     if ad_type in ["image", "video"] and not ad_file:
@@ -317,7 +329,7 @@ if st.button("🚀 开始双向分析与智能融合", type="primary", use_conta
         extract_keyframe(ffmpeg_exec, str(orig_path), t, img_path)
         with cols[i]:
             st.image(img_path, caption=f"原片 第 {t:.1f} 秒")
-            analysis = analyze_image_with_doubao(img_path, "描述画面场景、人物动作，分析此处是否适合做广告插入点？", volces_keys)
+            analysis = analyze_image_with_doubao(img_path, "描述画面场景、人物动作，分析此处是否适合做广告插入点？", volces_keys_only)
             vision_reports += f"【原片 {t:.1f}秒】画面：{analysis}\n"
 
     # ====== 2. 广告素材智能分析 ======
@@ -328,7 +340,7 @@ if st.button("🚀 开始双向分析与智能融合", type="primary", use_conta
         st.info(f"📝 {ad_material_desc}")
     elif ad_type == "image":
         with st.spinner("分析图片广告中..."):
-            ad_material_desc = analyze_image_with_doubao(ad_input_path, "详细描述这张图片中的产品、品牌属性和核心视觉元素。", volces_keys)
+            ad_material_desc = analyze_image_with_doubao(ad_input_path, "详细描述这张图片中的产品、品牌属性和核心视觉元素。", volces_keys_only)
         st.image(ad_input_path, width=200)
         st.success(f"🖼️ 素材解析：{ad_material_desc}")
     elif ad_type == "video":
@@ -336,7 +348,7 @@ if st.button("🚀 开始双向分析与智能融合", type="primary", use_conta
             ad_frame_path = str(job_dir / "ad_video_frame.jpg")
             ad_dur = get_media_meta(ffprobe_exec, ad_input_path)["duration"]
             extract_keyframe(ffmpeg_exec, ad_input_path, ad_dur/2, ad_frame_path)
-            ad_material_desc = analyze_image_with_doubao(ad_frame_path, "这是将要植入的广告视频中间帧，请描述其画面内容、产品特征及风格氛围。", volces_keys)
+            ad_material_desc = analyze_image_with_doubao(ad_frame_path, "这是将要植入的广告视频中间帧，请描述其画面内容、产品特征及风格氛围。", volces_keys_only)
         st.image(ad_frame_path, width=200)
         st.success(f"🎬 视频解析：{ad_material_desc}")
 
@@ -356,12 +368,12 @@ if st.button("🚀 开始双向分析与智能融合", type="primary", use_conta
         st.image(transition_frame, caption=f"提取原片第 {insert_t:.1f} 秒作为无缝延展起点")
         
         final_ad_video_path = str(job_dir / "seedance_generated.mp4")
-        generate_video_with_seedance(plan.get("video_prompt", ""), transition_frame, volces_keys, final_ad_video_path)
+        generate_video_with_seedance(plan.get("video_prompt", ""), transition_frame, volces_configs, final_ad_video_path)
         st.success("✅ 原视频首帧延展生成完毕！")
         
     elif ad_type == "image":
         final_ad_video_path = str(job_dir / "seedance_generated.mp4")
-        generate_video_with_seedance(plan.get("video_prompt", ""), ad_input_path, volces_keys, final_ad_video_path)
+        generate_video_with_seedance(plan.get("video_prompt", ""), ad_input_path, volces_configs, final_ad_video_path)
         st.success("✅ 产品图片动效渲染完毕！")
         
     elif ad_type == "video":
