@@ -1,3 +1,4 @@
+
 import os
 import re
 import json
@@ -23,6 +24,28 @@ st.caption("全链路：双向视觉分析(原片+素材) -> 导演决策(基于
 
 OUTPUT_ROOT = Path.cwd() / "outputs"
 OUTPUT_ROOT.mkdir(exist_ok=True)
+
+# =========================
+# 🔐 核心密钥配置 (隐藏在后端)
+# =========================
+# 优先从环境变量读取，如果没有则使用默认硬编码的 Key
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "sk-6617460198bf4e67814e1fb066504bd0")
+
+VOLCES_KEY_PRIMARY = os.getenv("VOLCES_KEY_PRIMARY", "ark-55944f19-c838-49f2-971c-ca703b3980f1-f04e1")
+VOLCES_KEY_BACKUP1 = os.getenv("VOLCES_KEY_BACKUP1", "ark-55944f19-c838-49f2-971c-ca703b3980f1-f04e1")
+VOLCES_KEY_BACKUP2 = os.getenv("VOLCES_KEY_BACKUP2", "ark-ff09d587-8442-432e-91e0-88ba3886d634-86277")
+
+# 构造 主备 Key 和 对应模型的配置列表
+VOLCES_CONFIGS = []
+if VOLCES_KEY_PRIMARY.strip():
+    VOLCES_CONFIGS.append({"key": VOLCES_KEY_PRIMARY.strip(), "model": "doubao-seedance-1-5-pro-251215"})
+if VOLCES_KEY_BACKUP1.strip():
+    VOLCES_CONFIGS.append({"key": VOLCES_KEY_BACKUP1.strip(), "model": "doubao-seedance-1-0-pro-fast-251015"})
+if VOLCES_KEY_BACKUP2.strip():
+    VOLCES_CONFIGS.append({"key": VOLCES_KEY_BACKUP2.strip(), "model": "doubao-seedance-1-0-pro-fast-251015"})
+
+# 单独提取 keys 用于视觉分析函数 (视觉分析模型统一固定)
+VOLCES_KEYS_ONLY = [c["key"] for c in VOLCES_CONFIGS]
 
 # =========================
 # 2. 核心工具与视频处理函数
@@ -146,7 +169,6 @@ def plan_with_deepseek(api_key: str, model: str, orig_desc: str, dur: float, vis
     return extract_json_object(resp.choices[0].message.content)
 
 def generate_video_with_seedance(prompt: str, image_path: str, api_configs: list, output_path: str) -> str:
-    """调用火山豆包 Seedance 模型生成真实视频 (动态匹配 Key 和 Model)"""
     url_create = "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks"
     
     full_prompt = f"{prompt} --duration 5 --camerafixed false"
@@ -166,7 +188,6 @@ def generate_video_with_seedance(prompt: str, image_path: str, api_configs: list
     working_model = None
     last_err = ""
     
-    # 遍历主备配置，根据对应的 Key 和 Model 发起请求
     for config in api_configs:
         api_key = config["key"]
         model_name = config["model"]
@@ -190,7 +211,6 @@ def generate_video_with_seedance(prompt: str, image_path: str, api_configs: list
     if not task_id:
         raise RuntimeError(f"视频生成任务创建失败(主备配置均无效): {last_err}")
 
-    # 使用创建成功的 Key 轮询等待视频生成完成
     poll_headers = {"Authorization": f"Bearer {working_key}", "Content-Type": "application/json"}
     url_query = f"https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/{task_id}"
     
@@ -252,30 +272,12 @@ def build_final_video(ffmpeg, ffprobe, orig_path, ad_mp4_path, plan, work_dir):
 # 5. Streamlit 前端交互
 # =========================
 with st.sidebar:
-    st.header("⚙️ 核心引擎配置")
+    st.header("⚙️ 引擎选项")
+    st.caption("所有核心密钥已在后台静默托管，为您提供安全的生成环境。")
     
-    st.subheader("火山引擎 (豆包) API Keys")
-    volces_key_primary = st.text_input("主 Key (1.5 Pro)", value="ark-55944f19-c838-49f2-971c-ca703b3980f1-f04e1", type="password")
-    volces_key_backup1 = st.text_input("备用 Key 1 (1.0 Fast)", value="ark-55944f19-c838-49f2-971c-ca703b3980f1-f04e1", type="password")
-    volces_key_backup2 = st.text_input("备用 Key 2 (1.0 Fast)", value="ark-ff09d587-8442-432e-91e0-88ba3886d634-86277", type="password")
+    deepseek_model = st.selectbox("DeepSeek 导演模型", ["deepseek-chat", "deepseek-v4-flash", "deepseek-v4-pro"], index=0)
     
-    # 构造 主备 Key 和 对应模型的配置列表
-    volces_configs = []
-    if volces_key_primary.strip():
-        volces_configs.append({"key": volces_key_primary.strip(), "model": "doubao-seedance-1-5-pro-251215"})
-    if volces_key_backup1.strip():
-        volces_configs.append({"key": volces_key_backup1.strip(), "model": "doubao-seedance-1-0-pro-fast-251015"})
-    if volces_key_backup2.strip():
-        volces_configs.append({"key": volces_key_backup2.strip(), "model": "doubao-seedance-1-0-pro-fast-251015"})
-        
-    # 单独提取 keys 用于视觉分析函数 (视觉分析模型统一固定)
-    volces_keys_only = [c["key"] for c in volces_configs]
-    
-    st.subheader("DeepSeek 决策大脑")
-    deepseek_key = st.text_input("DeepSeek API Key", value="sk-be2f2294c2f34707a6452855a7441c76", type="password")
-    deepseek_model = st.selectbox("DeepSeek 模型", ["deepseek-chat", "deepseek-v4-flash", "deepseek-v4-pro"], index=0)
-    
-    st.subheader("本地工具")
+    st.subheader("本地环境依赖")
     ffmpeg_bin = st.text_input("ffmpeg 路径", "ffmpeg")
     ffprobe_bin = st.text_input("ffprobe 路径", "ffprobe")
 
@@ -297,8 +299,11 @@ with col2:
         ad_file = st.file_uploader("上传成片广告视频", type=["mp4"])
 
 if st.button("🚀 开始双向分析与智能融合", type="primary", use_container_width=True):
-    if not (volces_configs and deepseek_key and orig_vid):
-        st.error("请填全 API Keys 并上传原视频！")
+    if not orig_vid:
+        st.error("请上传原视频！")
+        st.stop()
+    if not VOLCES_CONFIGS or not DEEPSEEK_API_KEY:
+        st.error("系统后端缺少必要的 API Key 配置，请联系管理员。")
         st.stop()
     if ad_type in ["image", "video"] and not ad_file:
         st.error(f"请上传广告 {ad_type} 素材！")
@@ -329,7 +334,7 @@ if st.button("🚀 开始双向分析与智能融合", type="primary", use_conta
         extract_keyframe(ffmpeg_exec, str(orig_path), t, img_path)
         with cols[i]:
             st.image(img_path, caption=f"原片 第 {t:.1f} 秒")
-            analysis = analyze_image_with_doubao(img_path, "描述画面场景、人物动作，分析此处是否适合做广告插入点？", volces_keys_only)
+            analysis = analyze_image_with_doubao(img_path, "描述画面场景、人物动作，分析此处是否适合做广告插入点？", VOLCES_KEYS_ONLY)
             vision_reports += f"【原片 {t:.1f}秒】画面：{analysis}\n"
 
     # ====== 2. 广告素材智能分析 ======
@@ -340,7 +345,7 @@ if st.button("🚀 开始双向分析与智能融合", type="primary", use_conta
         st.info(f"📝 {ad_material_desc}")
     elif ad_type == "image":
         with st.spinner("分析图片广告中..."):
-            ad_material_desc = analyze_image_with_doubao(ad_input_path, "详细描述这张图片中的产品、品牌属性和核心视觉元素。", volces_keys_only)
+            ad_material_desc = analyze_image_with_doubao(ad_input_path, "详细描述这张图片中的产品、品牌属性和核心视觉元素。", VOLCES_KEYS_ONLY)
         st.image(ad_input_path, width=200)
         st.success(f"🖼️ 素材解析：{ad_material_desc}")
     elif ad_type == "video":
@@ -348,13 +353,13 @@ if st.button("🚀 开始双向分析与智能融合", type="primary", use_conta
             ad_frame_path = str(job_dir / "ad_video_frame.jpg")
             ad_dur = get_media_meta(ffprobe_exec, ad_input_path)["duration"]
             extract_keyframe(ffmpeg_exec, ad_input_path, ad_dur/2, ad_frame_path)
-            ad_material_desc = analyze_image_with_doubao(ad_frame_path, "这是将要植入的广告视频中间帧，请描述其画面内容、产品特征及风格氛围。", volces_keys_only)
+            ad_material_desc = analyze_image_with_doubao(ad_frame_path, "这是将要植入的广告视频中间帧，请描述其画面内容、产品特征及风格氛围。", VOLCES_KEYS_ONLY)
         st.image(ad_frame_path, width=200)
         st.success(f"🎬 视频解析：{ad_material_desc}")
 
     # ====== 3. DeepSeek 决策 ======
     st.markdown("### 🧠 DeepSeek 导演全局决策...")
-    plan = plan_with_deepseek(deepseek_key, deepseek_model, orig_desc, dur, vision_reports, ad_type, ad_material_desc)
+    plan = plan_with_deepseek(DEEPSEEK_API_KEY, deepseek_model, orig_desc, dur, vision_reports, ad_type, ad_material_desc)
     st.json(plan)
     insert_t = max(1.0, min(float(plan.get("insert_time_sec", dur/2)), dur - 1.0))
 
@@ -368,12 +373,12 @@ if st.button("🚀 开始双向分析与智能融合", type="primary", use_conta
         st.image(transition_frame, caption=f"提取原片第 {insert_t:.1f} 秒作为无缝延展起点")
         
         final_ad_video_path = str(job_dir / "seedance_generated.mp4")
-        generate_video_with_seedance(plan.get("video_prompt", ""), transition_frame, volces_configs, final_ad_video_path)
+        generate_video_with_seedance(plan.get("video_prompt", ""), transition_frame, VOLCES_CONFIGS, final_ad_video_path)
         st.success("✅ 原视频首帧延展生成完毕！")
         
     elif ad_type == "image":
         final_ad_video_path = str(job_dir / "seedance_generated.mp4")
-        generate_video_with_seedance(plan.get("video_prompt", ""), ad_input_path, volces_configs, final_ad_video_path)
+        generate_video_with_seedance(plan.get("video_prompt", ""), ad_input_path, VOLCES_CONFIGS, final_ad_video_path)
         st.success("✅ 产品图片动效渲染完毕！")
         
     elif ad_type == "video":
