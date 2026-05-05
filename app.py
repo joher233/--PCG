@@ -1,4 +1,3 @@
-
 import os
 import re
 import json
@@ -6,13 +5,12 @@ import uuid
 import time
 import shutil
 import base64
-import tempfile
 import subprocess
 import requests
 from pathlib import Path
 
 import streamlit as st
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 from openai import OpenAI
 
 # =========================
@@ -26,14 +24,21 @@ OUTPUT_ROOT = Path.cwd() / "outputs"
 OUTPUT_ROOT.mkdir(exist_ok=True)
 
 # =========================
-# 🔐 核心密钥配置 (隐藏在后端)
+# 🔐 核心密钥安全读取逻辑 (防泄露设计)
 # =========================
-# 优先从环境变量读取，如果没有则使用默认硬编码的 Key
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "sk-50333d79e2f64cfaa53fce04b5490546")
+# 优先从 Streamlit Secrets 读取，如果没有则尝试从环境变量读取
+def get_secret(key_name: str) -> str:
+    try:
+        if key_name in st.secrets:
+            return st.secrets[key_name]
+    except Exception:
+        pass
+    return os.getenv(key_name, "")
 
-VOLCES_KEY_PRIMARY = os.getenv("VOLCES_KEY_PRIMARY", "ark-55944f19-c838-49f2-971c-ca703b3980f1-f04e1")
-VOLCES_KEY_BACKUP1 = os.getenv("VOLCES_KEY_BACKUP1", "ark-55944f19-c838-49f2-971c-ca703b3980f1-f04e1")
-VOLCES_KEY_BACKUP2 = os.getenv("VOLCES_KEY_BACKUP2", "ark-ff09d587-8442-432e-91e0-88ba3886d634-86277")
+DEEPSEEK_API_KEY = get_secret("DEEPSEEK_API_KEY")
+VOLCES_KEY_PRIMARY = get_secret("VOLCES_KEY_PRIMARY")
+VOLCES_KEY_BACKUP1 = get_secret("VOLCES_KEY_BACKUP1")
+VOLCES_KEY_BACKUP2 = get_secret("VOLCES_KEY_BACKUP2")
 
 # 构造 主备 Key 和 对应模型的配置列表
 VOLCES_CONFIGS = []
@@ -273,8 +278,12 @@ def build_final_video(ffmpeg, ffprobe, orig_path, ad_mp4_path, plan, work_dir):
 # =========================
 with st.sidebar:
     st.header("⚙️ 引擎选项")
-    st.caption("所有核心密钥已在后台静默托管，为您提供安全的生成环境。")
     
+    if not DEEPSEEK_API_KEY or not VOLCES_CONFIGS:
+        st.error("⚠️ 警告：检测到缺失核心 API 密钥，请在 Streamlit Cloud 后台的 Secrets 中配置。")
+    else:
+        st.success("✅ 云端安全密钥已挂载")
+
     deepseek_model = st.selectbox("DeepSeek 导演模型", ["deepseek-chat", "deepseek-v4-flash", "deepseek-v4-pro"], index=0)
     
     st.subheader("本地环境依赖")
@@ -303,7 +312,7 @@ if st.button("🚀 开始双向分析与智能融合", type="primary", use_conta
         st.error("请上传原视频！")
         st.stop()
     if not VOLCES_CONFIGS or not DEEPSEEK_API_KEY:
-        st.error("系统后端缺少必要的 API Key 配置，请联系管理员。")
+        st.error("系统后端缺少必要的 API Key 配置，请确保已配置 Secrets。")
         st.stop()
     if ad_type in ["image", "video"] and not ad_file:
         st.error(f"请上传广告 {ad_type} 素材！")
