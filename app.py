@@ -29,7 +29,7 @@ OUTPUT_ROOT.mkdir(exist_ok=True)
 # 🔐 核心密钥配置 (隐藏在后端)
 # =========================
 # 优先从环境变量读取，如果没有则使用默认硬编码的 Key
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "sk-6617460198bf4e67814e1fb066504bd0")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "sk-9486f84f425e4c25a5eb35779c98c509")
 
 VOLCES_KEY_PRIMARY = os.getenv("VOLCES_KEY_PRIMARY", "ark-55944f19-c838-49f2-971c-ca703b3980f1-f04e1")
 VOLCES_KEY_BACKUP1 = os.getenv("VOLCES_KEY_BACKUP1", "ark-55944f19-c838-49f2-971c-ca703b3980f1-f04e1")
